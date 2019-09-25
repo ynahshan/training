@@ -29,7 +29,9 @@ class NeuMF(nn.Module):
         for i in range(1, nb_mlp_layers):
             self.mlp.extend([nn.Linear(mlp_layer_sizes[i - 1], mlp_layer_sizes[i])])  # noqa: E501
 
-        self.final = nn.Linear(mlp_layer_sizes[-1] + mf_dim, 1)
+        # self.final = nn.Linear(mlp_layer_sizes[-1] + mf_dim, 1)
+        self.final_mf = nn.Linear(mf_dim, 1)
+        self.final_mlp = nn.Linear(mlp_layer_sizes[-1], 1)
 
         self.mf_user_embed.weight.data.normal_(0., 0.01)
         self.mf_item_embed.weight.data.normal_(0., 0.01)
@@ -49,7 +51,7 @@ class NeuMF(nn.Module):
             if type(layer) != nn.Linear:
                 continue
             golorot_uniform(layer)
-        lecunn_uniform(self.final)
+        # lecunn_uniform(self.final)
 
     def forward(self, user, item, sigmoid=False):
         xmfu = self.mf_user_embed(user)
@@ -63,8 +65,12 @@ class NeuMF(nn.Module):
             xmlp = layer(xmlp)
             xmlp = nn.functional.relu(xmlp)
 
-        x = torch.cat((xmf, xmlp), dim=1)
-        x = self.final(x)
+        # x = torch.cat((xmf, xmlp), dim=1)
+        # x = self.final(x)
+        xmf = self.final_mf(xmf)
+        xmlp = self.final_mlp(xmlp)
+        x = torch.add(xmf, xmlp)
+
         if sigmoid:
             x = torch.sigmoid(x)
         return x
