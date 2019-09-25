@@ -27,7 +27,7 @@ class NeuMF(nn.Module):
         mlperf_log.ncf_print(key=mlperf_log.MODEL_HP_MLP_LAYER_SIZES, value=mlp_layer_sizes)
         self.mlp = nn.ModuleList()
         for i in range(1, nb_mlp_layers):
-            self.mlp.extend([nn.Linear(mlp_layer_sizes[i - 1], mlp_layer_sizes[i])])  # noqa: E501
+            self.mlp.extend([nn.Linear(mlp_layer_sizes[i - 1], mlp_layer_sizes[i]), nn.ReLU()])  # noqa: E501
 
         # self.final = nn.Linear(mlp_layer_sizes[-1] + mf_dim, 1)
         self.final_mf = nn.Linear(mf_dim, 1)
@@ -63,7 +63,7 @@ class NeuMF(nn.Module):
         xmlp = torch.cat((xmlpu, xmlpi), dim=1)
         for i, layer in enumerate(self.mlp):
             xmlp = layer(xmlp)
-            xmlp = nn.functional.relu(xmlp)
+            # xmlp = nn.functional.relu(xmlp)
 
         # x = torch.cat((xmf, xmlp), dim=1)
         # x = self.final(x)

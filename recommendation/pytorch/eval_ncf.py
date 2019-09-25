@@ -6,9 +6,12 @@ import numpy as np
 from tqdm import tqdm
 import math
 from neumf import NeuMF
-
-
 import pickle
+
+sys.path.append('/home/cvds_lab/yury/mxt-experiments/nn-quantization-pytorch')
+from quantization.quantizer import ModelQuantizer
+from quantization.posttraining.module_wrapper import ActivationModuleWrapperPost, ParameterModuleWrapperPost
+
 
 def save_data(data_, fname):
     with open(fname, 'wb') as f:
@@ -35,7 +38,15 @@ def parse_args():
                         help='manually set random seed for torch')
     parser.add_argument('--load_ckp', type=str, default=None,
                         help='Path to load checkpoint from.')
-    parser.add_argument('--quantize', action='store_true', help="Quantize network.")
+
+    parser.add_argument('--quantize', '-q', action='store_true', help='Enable quantization', default=False)
+    parser.add_argument('--experiment', '-exp', help='Name of the experiment', default='default')
+    parser.add_argument('--bit_weights', '-bw', type=int, help='Number of bits for weights', default=None)
+    parser.add_argument('--bit_act', '-ba', type=int, help='Number of bits for activations', default=None)
+    parser.add_argument('--pre_relu', dest='pre_relu', action='store_true', help='use pre-ReLU quantization')
+    parser.add_argument('--qtype', default='max_static', help='Type of quantization method')
+    parser.add_argument('-lp', type=float, help='p parameter of Lp norm', default=3.)
+
     return parser.parse_args()
 
 
@@ -114,6 +125,17 @@ def main():
     if args.load_ckp:
         ckp = torch.load(args.load_ckp)
         model.load_state_dict(ckp)
+
+    if args.quantize:
+        all_linear = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
+        all_relu = [n for n, m in model.named_modules() if isinstance(m, nn.ReLU)]
+        all_relu6 = [n for n, m in model.named_modules() if isinstance(m, nn.ReLU6)]
+        layers = all_relu + all_relu6 + all_linear
+        replacement_factory = {nn.ReLU: ActivationModuleWrapperPost,
+                               nn.ReLU6: ActivationModuleWrapperPost,
+                               nn.Linear: ParameterModuleWrapperPost}
+        mq = ModelQuantizer(model, args, layers, replacement_factory)
+        # mq.log_quantizer_state(ml_logger, -1)
 
     test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user = data_loader(args.data)
     hr, ndcg = val(model, test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user)
