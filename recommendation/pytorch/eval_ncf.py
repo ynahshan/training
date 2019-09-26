@@ -90,8 +90,10 @@ def val(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user):
             # key(item):value(predicetion) pairs are ordered as original key(item) order
             # so we need the first position of real item(stored in real_indices) to check if it is in topk
             ifzero = (out == real_indices[i].cuda().view(-1,1))
-            hits += ifzero.sum()
-            ndcg += (log_2 / (torch.nonzero(ifzero)[:,1].view(-1).to(torch.float)+2).log_()).sum()
+            hits_ = ifzero.sum()
+            ndcg_ = (log_2 / (torch.nonzero(ifzero)[:,1].view(-1).to(torch.float)+2).log_()).sum()
+            hits += hits_
+            ndcg += ndcg_
 
     hits = hits.item()
     ndcg = ndcg.item()
