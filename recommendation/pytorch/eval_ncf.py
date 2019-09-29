@@ -71,7 +71,26 @@ def data_loader(path):
     return test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user
 
 
-def val(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user):
+class NcfData(object):
+    def __init__(self, test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user):
+        self.test_users = test_users
+        self.test_items = test_items
+        self.dup_mask = dup_mask
+        self.real_indices = real_indices
+        self.K = K
+        self.samples_per_user = samples_per_user
+        self.num_user = num_user
+
+    def get_subset(self, N):
+        return NcfData(self.test_users[:N], self.test_items[:N], self.dup_mask[:N], self.real_indices[:N], self.K,
+                       self.samples_per_user, self.num_user)
+
+    def remove_last(self, N):
+        return NcfData(self.test_users[N:], self.test_items[N:], self.dup_mask[N:], self.real_indices[N:], self.K,
+                       self.samples_per_user, self.num_user)
+
+
+def val(model, data):
     print('Validation ...')
     log_2 = math.log(2)
 
@@ -80,16 +99,16 @@ def val(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user):
     ndcg = torch.tensor(0., device='cuda')
 
     with torch.no_grad():
-        list_ = list(enumerate(zip(x,y)))
+        list_ = list(enumerate(zip(data.test_users, data.test_items)))
         for i, (u,n) in tqdm(list_):
-            res = model(u.cuda().view(-1), n.cuda().view(-1), sigmoid=True).detach().view(-1,samples_per_user)
+            res = model(u.cuda().view(-1), n.cuda().view(-1), sigmoid=True).detach().view(-1, data.samples_per_user)
             # set duplicate results for the same item to -1 before topk
-            res[dup_mask[i]] = -1
-            out = torch.topk(res,K)[1]
+            res[data.dup_mask[i]] = -1
+            out = torch.topk(res, data.K)[1]
             # topk in pytorch is stable(if not sort)
             # key(item):value(predicetion) pairs are ordered as original key(item) order
             # so we need the first position of real item(stored in real_indices) to check if it is in topk
-            ifzero = (out == real_indices[i].cuda().view(-1,1))
+            ifzero = (out == data.real_indices[i].cuda().view(-1,1))
             hits_ = ifzero.sum()
             ndcg_ = (log_2 / (torch.nonzero(ifzero)[:,1].view(-1).to(torch.float)+2).log_()).sum()
             hits += hits_
@@ -98,7 +117,7 @@ def val(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user):
     hits = hits.item()
     ndcg = ndcg.item()
 
-    return hits/num_user, ndcg/num_user
+    return hits / data.num_user, ndcg / data.num_user
 
 
 def main():
@@ -140,7 +159,10 @@ def main():
         # mq.log_quantizer_state(ml_logger, -1)
 
     test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user = data_loader(args.data)
-    hr, ndcg = val(model, test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user)
+    data = NcfData(test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user)
+    data1 = data.remove_last(100)
+
+    hr, ndcg = val(model, data1)
     print('')
     print('')
     print('HR@{K} = {hit_rate:.4f}, NDCG@{K} = {ndcg:.4f}'

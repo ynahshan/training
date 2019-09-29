@@ -9,12 +9,13 @@ from neumf import NeuMF
 import random
 import torch.backends.cudnn as cudnn
 from itertools import count
+from pathlib import Path
 
-sys.path.append('/home/cvds_lab/yury/mxt-experiments/nn-quantization-pytorch')
+sys.path.insert(0, '/home/cvds_lab/yury/mxt-experiments/nn-quantization-pytorch')
 from quantization.quantizer import ModelQuantizer
 from quantization.posttraining.module_wrapper import ActivationModuleWrapperPost, ParameterModuleWrapperPost
 from quantization.methods.clipped_uniform import FixedClipValueQuantization
-# from utils.mllog import MLlogger
+from utils.mllog import MLlogger
 import scipy.optimize as opt
 
 
@@ -104,6 +105,10 @@ class NcfData(object):
         return NcfData(self.test_users[:N], self.test_items[:N], self.dup_mask[:N], self.real_indices[:N], self.K,
                        self.samples_per_user, self.num_user)
 
+    def remove_last(self, N):
+        return NcfData(self.test_users[N:], self.test_items[N:], self.dup_mask[N:], self.real_indices[N:], self.K,
+                       self.samples_per_user, self.num_user)
+
 
 def set_clipping(mq, clipping, device, verbose=False):
     qwrappers = mq.get_qwrappers()
@@ -154,6 +159,7 @@ def val(model, data):
 
 
 def evaluate_calibration(model, cal_data):
+    criterion = nn.BCEWithLogitsLoss(reduction='none')
     hits, ndcg = val(model, cal_data)
     return -ndcg * cal_data.num_user
 
@@ -187,9 +193,7 @@ def run_inference_on_calibration(scales, model, mq, cal_data):
     return dcg
 
 
-def main():
-    args = parse_args()
-
+def main(args, ml_logger):
     # Fix the seed
     random.seed(args.seed)
     if not args.dont_fix_np_seed:
@@ -232,6 +236,7 @@ def main():
     test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user = data_loader(args.data)
     data = NcfData(test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user)
     cal_data = data.get_subset(100)  # TODO: modify this to get random smple of size N
+    data1 = data.remove_last(100)
 
     print("init_method: {}, qtype {}".format(args.init_method, args.qtype))
     # evaluate to initialize dynamic clipping
@@ -242,8 +247,8 @@ def main():
     init = get_clipping(mq)
 
     # evaluate
-    hr, ndcg = validate(model, data)
-    # ml_logger.log_metric('HR init', hr, step='auto')
+    hr, ndcg = validate(model, data1)
+    ml_logger.log_metric('HR init', hr, step='auto')
 
     # run optimizer
     min_options = {}
@@ -267,10 +272,13 @@ def main():
     scales = res.x
     set_clipping(mq, scales, model.device)
     # evaluate
-    hr, ndcg = validate(model, data)
-    # ml_logger.log_metric('HR Powell', hr, step='auto')
+    hr, ndcg = validate(model, data1)
+    ml_logger.log_metric('HR Powell', hr, step='auto')
     # save scales
 
-
+home = str(Path.home())
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    with MLlogger(os.path.join(home, 'mxt-sim/mllog_runs'), args.experiment, args,
+                  name_args=['NCF', '1B', "W{}A{}".format(args.bit_weights, args.bit_act)]) as ml_logger:
+        main(args, ml_logger)
