@@ -110,6 +110,25 @@ class NcfData(object):
                        self.samples_per_user, self.num_user)
 
 
+class CalibrationSet(object):
+    def __init__(self, f_path):
+        data_ = torch.load(f_path)
+        self.users = data_['users']
+        self.items = data_['items']
+        self.labels = data_['labels']
+
+    def cuda(self):
+        self.users = self.users.cuda()
+        self.items = self.items.cuda()
+        self.labels = self.labels.cuda()
+        return self
+
+    def split(self, batch_size):
+        self.users = self.users.split(batch_size)
+        self.items = self.items.split(batch_size)
+        self.labels = self.labels.split(batch_size)
+
+
 def set_clipping(mq, clipping, device, verbose=False):
     qwrappers = mq.get_qwrappers()
     for i, qwrapper in enumerate(qwrappers):
@@ -158,10 +177,15 @@ def val(model, data):
     return hits / data.num_user, ndcg / data.num_user
 
 
-def evaluate_calibration(model, cal_data):
-    criterion = nn.BCEWithLogitsLoss(reduction='none')
-    hits, ndcg = val(model, cal_data)
-    return -ndcg * cal_data.num_user
+def evaluate_calibration(model, cal_data, criterion):
+    total_loss = torch.tensor([0.]).cuda()
+    for i in range(len(cal_data.users)):
+        outputs = model(cal_data.users[i].view(-1), cal_data.items[i].view(-1), sigmoid=True)
+        loss = criterion(outputs.view(-1), cal_data.labels[i])
+        total_loss += loss
+
+    loss = total_loss.item() / len(cal_data.users)
+    return loss
 
 
 def validate(model, data):
@@ -175,12 +199,12 @@ def validate(model, data):
 
 _eval_count = count(0)
 _min_ndcg = 1e6
-def run_inference_on_calibration(scales, model, mq, cal_data):
+def run_inference_on_calibration(scales, model, mq, cal_data, criterion):
     global _eval_count, _min_ndcg
     eval_count = next(_eval_count)
 
     set_clipping(mq, scales, model.device, verbose=(eval_count % 300 == 0))
-    dcg = evaluate_calibration(model, cal_data)
+    dcg = evaluate_calibration(model, cal_data, criterion)
 
     if dcg < _min_ndcg:
         _min_ndcg = dcg
@@ -235,19 +259,22 @@ def main(args, ml_logger):
 
     test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user = data_loader(args.data)
     data = NcfData(test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user)
-    cal_data = data.get_subset(100)  # TODO: modify this to get random smple of size N
-    data1 = data.remove_last(100)
+    cal_data = CalibrationSet('ml-20mx16x32/cal_set').cuda()
+    cal_data.split(batch_size=1024)
+
+    criterion = nn.BCEWithLogitsLoss(reduction='mean')
+    criterion = criterion.cuda()
 
     print("init_method: {}, qtype {}".format(args.init_method, args.qtype))
     # evaluate to initialize dynamic clipping
-    dcg = evaluate_calibration(model, cal_data)
-    print("Initial dcg: {:.4f}".format(dcg))
+    loss = evaluate_calibration(model, cal_data, criterion)
+    print("Initial loss: {:.4f}".format(loss))
 
     # get clipping values
     init = get_clipping(mq)
 
     # evaluate
-    hr, ndcg = validate(model, data1)
+    hr, ndcg = validate(model, data)
     ml_logger.log_metric('HR init', hr, step='auto')
 
     # run optimizer
@@ -261,18 +288,18 @@ def main(args, ml_logger):
 
     def local_search_callback(x):
         it = next(_iter)
-        dcg = run_inference_on_calibration(x, model, mq, cal_data)
+        loss = run_inference_on_calibration(x, model, mq, cal_data, criterion)
         print("\n[{}]: Local search callback".format(it))
-        print("dcg: {:.4f}\n".format(dcg))
+        print("loss: {:.4f}\n".format(loss))
 
-    res = opt.minimize(lambda scales: run_inference_on_calibration(scales, model, mq, cal_data), np.array(init),
+    res = opt.minimize(lambda scales: run_inference_on_calibration(scales, model, mq, cal_data, criterion), np.array(init),
                        method=args.min_method, options=min_options, callback=local_search_callback)
 
     print(res)
     scales = res.x
     set_clipping(mq, scales, model.device)
     # evaluate
-    hr, ndcg = validate(model, data1)
+    hr, ndcg = validate(model, data)
     ml_logger.log_metric('HR Powell', hr, step='auto')
     # save scales
 

@@ -160,9 +160,8 @@ def main():
 
     test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user = data_loader(args.data)
     data = NcfData(test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user)
-    data1 = data.remove_last(100)
 
-    hr, ndcg = val(model, data1)
+    hr, ndcg = val(model, data)
     print('')
     print('')
     print('HR@{K} = {hit_rate:.4f}, NDCG@{K} = {ndcg:.4f}'
