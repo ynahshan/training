@@ -148,13 +148,16 @@ def main():
         model.load_state_dict(ckp)
 
     if args.quantize:
+        all_embeding = [n for n, m in model.named_modules() if isinstance(m, nn.Embedding)]
         all_linear = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
         all_relu = [n for n, m in model.named_modules() if isinstance(m, nn.ReLU)]
         all_relu6 = [n for n, m in model.named_modules() if isinstance(m, nn.ReLU6)]
-        layers = all_relu + all_relu6 + all_linear
+        # layers = all_relu + all_relu6 + all_linear
+        layers = all_embeding
         replacement_factory = {nn.ReLU: ActivationModuleWrapperPost,
                                nn.ReLU6: ActivationModuleWrapperPost,
-                               nn.Linear: ParameterModuleWrapperPost}
+                               nn.Linear: ParameterModuleWrapperPost,
+                               nn.Embedding: ActivationModuleWrapperPost}
         mq = ModelQuantizer(model, args, layers, replacement_factory)
         # mq.log_quantizer_state(ml_logger, -1)
 

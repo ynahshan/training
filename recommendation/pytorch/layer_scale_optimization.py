@@ -198,23 +198,23 @@ def validate(model, data):
 
 
 _eval_count = count(0)
-_min_ndcg = 1e6
+_min_loss = 1e6
 def run_inference_on_calibration(scales, model, mq, cal_data, criterion):
-    global _eval_count, _min_ndcg
+    global _eval_count, _min_loss
     eval_count = next(_eval_count)
 
     set_clipping(mq, scales, model.device, verbose=(eval_count % 300 == 0))
-    dcg = evaluate_calibration(model, cal_data, criterion)
+    loss = evaluate_calibration(model, cal_data, criterion)
 
-    if dcg < _min_ndcg:
-        _min_ndcg = dcg
+    if loss < _min_loss:
+        _min_loss = loss
 
     print_freq = 20
     if eval_count % 20 == 0:
-        print("func eval iteration: {}, minimum dcg of last {} iterations: {:.4f}".format(
-            eval_count, print_freq, _min_ndcg))
+        print("func eval iteration: {}, minimum loss of last {} iterations: {:.4f}".format(
+            eval_count, print_freq, _min_loss))
 
-    return dcg
+    return loss
 
 
 def main(args, ml_logger):
@@ -247,20 +247,22 @@ def main(args, ml_logger):
         ckp = torch.load(args.load_ckp)
         model.load_state_dict(ckp)
 
+    all_embeding = [n for n, m in model.named_modules() if isinstance(m, nn.Embedding)]
     all_linear = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
     all_relu = [n for n, m in model.named_modules() if isinstance(m, nn.ReLU)]
     all_relu6 = [n for n, m in model.named_modules() if isinstance(m, nn.ReLU6)]
-    layers = all_relu + all_relu6 + all_linear
+    layers = all_relu + all_relu6 + all_linear + all_embeding
     replacement_factory = {nn.ReLU: ActivationModuleWrapperPost,
                            nn.ReLU6: ActivationModuleWrapperPost,
-                           nn.Linear: ParameterModuleWrapperPost}
+                           nn.Linear: ParameterModuleWrapperPost,
+                           nn.Embedding: ActivationModuleWrapperPost}
     mq = ModelQuantizer(model, args, layers, replacement_factory)
     # mq.log_quantizer_state(ml_logger, -1)
 
     test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user = data_loader(args.data)
     data = NcfData(test_users, test_items, dup_mask, real_indices, K, samples_per_user, num_user)
     cal_data = CalibrationSet('ml-20mx16x32/cal_set').cuda()
-    cal_data.split(batch_size=1024)
+    cal_data.split(batch_size=10000)
 
     criterion = nn.BCEWithLogitsLoss(reduction='mean')
     criterion = criterion.cuda()
